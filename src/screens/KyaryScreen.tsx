@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -11,14 +11,20 @@ import {
   View,
 } from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import { useFocusEffect } from '@react-navigation/native';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  ExpoSpeechRecognitionModule,
+  useSpeechRecognitionEvent,
+} from 'expo-speech-recognition';
 
 import { AppText } from '../components/ui/AppText';
 import { GlassCard } from '../components/ui/GlassCard';
 import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { ScreenBackground } from '../components/ui/ScreenBackground';
+import { speak, stopSpeaking } from '../features/speech/speak';
 import { sendKyaryMessage, KyaryHistoryMessage } from '../services/kyary';
 import { useAppTheme } from '../theme/AppThemeProvider';
 import { hexToRgba, theme } from '../theme/theme';
@@ -43,6 +49,15 @@ type ChatMessage = {
   audioLabel?: string;
 };
 
+// Fases del modo de conversación por voz (manos libres).
+type VoicePhase = 'off' | 'listening' | 'thinking' | 'speaking';
+
+const VOICE_STATUS_LABEL: Record<Exclude<VoicePhase, 'off'>, string> = {
+  listening: 'Escuchando...',
+  thinking: 'Pensando...',
+  speaking: 'Hablando...',
+};
+
 const createLocalId = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -64,7 +79,32 @@ export function KyaryScreen() {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const recordingRef = useRef<Audio.Recording | null>(null);
 
+  // --- Modo voz (conversación hablada, manos libres) ---
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('off');
+  const [interimText, setInterimText] = useState('');
+  const [voiceLang, setVoiceLang] = useState<'es-ES' | 'ja-JP'>('es-ES');
+  const voiceActiveRef = useRef(false);
+  const voicePhaseRef = useRef<VoicePhase>('off');
+  const voiceLangRef = useRef(voiceLang);
+  const restartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref siempre-fresca de los mensajes: los callbacks de STT necesitan el historial
+  // actualizado turno a turno sin depender del closure del render.
+  const messagesRef = useRef<ChatMessage[]>(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  useEffect(() => {
+    voiceLangRef.current = voiceLang;
+  }, [voiceLang]);
+
+  const setPhase = (phase: VoicePhase) => {
+    voicePhaseRef.current = phase;
+    setVoicePhase(phase);
+  };
+
   const canSend = (input.trim().length > 0 || pendingImage || pendingAudio) && !isSending;
+  const voiceActive = voicePhase !== 'off';
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
@@ -226,27 +266,34 @@ export function KyaryScreen() {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  const submit = async () => {
-    const text = input.trim();
-    if ((!text && !pendingImage && !pendingAudio) || isSending) return;
-
+  // Núcleo reusable: manda un turno del usuario a Kyary y devuelve el texto de la
+  // respuesta (o null si falló). Lo usan el botón ENVIAR y el modo voz.
+  const sendUserTurn = async (payload: {
+    text: string;
+    imageUri?: string;
+    imageDataUrl?: string;
+    audioLabel?: string;
+    audioDataUrl?: string;
+  }): Promise<string | null> => {
     const pendingAssistantId = createLocalId('assistant-pending');
     const userMessage: ChatMessage = {
       id: createLocalId('user'),
       role: 'user',
-      text: text || (pendingImage ? '(imagen adjunta)' : '(audio adjunto)'),
-      imageUri: pendingImage?.uri,
-      audioLabel: pendingAudio
-        ? `Audio ${formatDuration(pendingAudio.durationMs)}`
-        : undefined,
+      text:
+        payload.text ||
+        (payload.imageDataUrl ? '(imagen adjunta)' : '(audio adjunto)'),
+      imageUri: payload.imageUri,
+      audioLabel: payload.audioLabel,
     };
     const history: KyaryHistoryMessage[] = [
-      ...messages.filter((m) => !m.pending).map((m) => ({ role: m.role, text: m.text })),
+      ...messagesRef.current
+        .filter((m) => !m.pending)
+        .map((m) => ({ role: m.role, text: m.text })),
       {
         role: 'user' as const,
-        text: text || '',
-        imageDataUrl: pendingImage?.dataUrl,
-        audioDataUrl: pendingAudio?.dataUrl,
+        text: payload.text || '',
+        imageDataUrl: payload.imageDataUrl,
+        audioDataUrl: payload.audioDataUrl,
       },
     ];
 
@@ -255,41 +302,178 @@ export function KyaryScreen() {
       userMessage,
       { id: pendingAssistantId, role: 'assistant', text: '', pending: true },
     ]);
-    setInput('');
-    setPendingImage(null);
-    setPendingAudio(null);
     setErrorText(null);
     setIsSending(true);
 
     try {
       const reply = await sendKyaryMessage(history);
-      setMessages((current) => {
-        const withoutPlaceholder = current.filter(
-          (m) => m.id !== pendingAssistantId,
-        );
-        return [
-          ...withoutPlaceholder,
-          {
-            id: createLocalId('assistant'),
-            role: 'assistant',
-            text: reply.text,
-          },
-        ];
-      });
+      setMessages((current) => [
+        ...current.filter((m) => m.id !== pendingAssistantId),
+        { id: createLocalId('assistant'), role: 'assistant', text: reply.text },
+      ]);
+      return reply.text;
     } catch (error) {
-      setMessages((current) =>
-        current.filter((m) => m.id !== pendingAssistantId),
-      );
+      setMessages((current) => current.filter((m) => m.id !== pendingAssistantId));
       setErrorText(
-        error instanceof Error
-          ? error.message
-          : 'No se pudo consultar a Kyary.',
+        error instanceof Error ? error.message : 'No se pudo consultar a Kyary.',
       );
+      return null;
     } finally {
       setIsSending(false);
-      setTimeout(() => inputRef.current?.focus(), 100);
     }
   };
+
+  const submit = async () => {
+    const text = input.trim();
+    if ((!text && !pendingImage && !pendingAudio) || isSending) return;
+
+    const image = pendingImage;
+    const audio = pendingAudio;
+    setInput('');
+    setPendingImage(null);
+    setPendingAudio(null);
+
+    await sendUserTurn({
+      text,
+      imageUri: image?.uri,
+      imageDataUrl: image?.dataUrl,
+      audioLabel: audio ? `Audio ${formatDuration(audio.durationMs)}` : undefined,
+      audioDataUrl: audio?.dataUrl,
+    });
+
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  // --- Loop de conversación por voz ---
+  const clearRestartTimeout = () => {
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+  };
+
+  const scheduleRestart = () => {
+    clearRestartTimeout();
+    restartTimeoutRef.current = setTimeout(() => {
+      restartTimeoutRef.current = null;
+      if (voiceActiveRef.current && voicePhaseRef.current === 'listening') {
+        startListening();
+      }
+    }, 500);
+  };
+
+  const startListening = () => {
+    try {
+      ExpoSpeechRecognitionModule.start({
+        lang: voiceLangRef.current,
+        interimResults: true,
+        continuous: false,
+      });
+    } catch {
+      scheduleRestart();
+    }
+  };
+
+  const processVoiceTurn = async (text: string) => {
+    const reply = await sendUserTurn({ text });
+    if (!voiceActiveRef.current) return;
+    if (reply) {
+      setPhase('speaking');
+      // Kyary responde en español; leemos la respuesta con voz española.
+      speak(reply, {
+        language: 'es-ES',
+        rate: 1.0,
+        onDone: () => {
+          if (!voiceActiveRef.current) return;
+          setPhase('listening');
+          startListening();
+        },
+      });
+    } else {
+      setPhase('listening');
+      startListening();
+    }
+  };
+
+  const startVoiceMode = async () => {
+    const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!permission.granted) {
+      setErrorText('Se necesita permiso de micrófono para hablar con Kyary.');
+      return;
+    }
+    if (isRecording) void stopRecording();
+    setErrorText(null);
+    setInterimText('');
+    voiceActiveRef.current = true;
+    setPhase('listening');
+    startListening();
+  };
+
+  const stopVoiceMode = () => {
+    voiceActiveRef.current = false;
+    clearRestartTimeout();
+    stopSpeaking();
+    try {
+      ExpoSpeechRecognitionModule.abort();
+    } catch {
+      // no-op
+    }
+    setInterimText('');
+    setPhase('off');
+  };
+
+  const toggleVoiceMode = () => {
+    if (voiceActiveRef.current) {
+      stopVoiceMode();
+    } else {
+      void startVoiceMode();
+    }
+  };
+
+  useSpeechRecognitionEvent('result', (event) => {
+    if (!voiceActiveRef.current) return;
+    const transcript = event.results[0]?.transcript ?? '';
+    if (!event.isFinal) {
+      setInterimText(transcript);
+      return;
+    }
+    setInterimText('');
+    const finalText = transcript.trim();
+    if (!finalText) return; // no se entendió nada; 'end' reabre la escucha
+    setPhase('thinking');
+    void processVoiceTurn(finalText);
+  });
+
+  useSpeechRecognitionEvent('end', () => {
+    if (voiceActiveRef.current && voicePhaseRef.current === 'listening') {
+      scheduleRestart();
+    }
+  });
+
+  useSpeechRecognitionEvent('error', (event) => {
+    if (!voiceActiveRef.current) return;
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      setErrorText('No hay permiso o servicio de reconocimiento de voz disponible.');
+      stopVoiceMode();
+      return;
+    }
+    // Errores transitorios (no-speech, no-match, network): seguimos escuchando.
+    if (voicePhaseRef.current === 'listening') {
+      scheduleRestart();
+    }
+  });
+
+  // Cortar el modo voz al salir de la pantalla (cambio de tab) o desmontar.
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        if (voiceActiveRef.current) {
+          stopVoiceMode();
+        }
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
 
   const isDark = mode === 'dark';
 
@@ -460,6 +644,56 @@ export function KyaryScreen() {
             </View>
           ) : null}
 
+          {voiceActive ? (
+            <View
+              style={[
+                styles.voiceBanner,
+                {
+                  borderColor: hexToRgba(activeTheme.colors.accent, 0.3),
+                  backgroundColor: hexToRgba(activeTheme.colors.accent, 0.08),
+                },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="account-voice"
+                size={16}
+                color={activeTheme.colors.accent}
+              />
+              <AppText
+                variant="bodySmall"
+                color={activeTheme.colors.textSecondary}
+                style={styles.voiceStatus}
+                numberOfLines={1}
+              >
+                {VOICE_STATUS_LABEL[voicePhase]}
+                {interimText ? `  “${interimText}”` : ''}
+              </AppText>
+              <Pressable
+                onPress={() =>
+                  setVoiceLang((current) =>
+                    current === 'es-ES' ? 'ja-JP' : 'es-ES',
+                  )
+                }
+                hitSlop={6}
+                style={[
+                  styles.voiceLangChip,
+                  { borderColor: hexToRgba(activeTheme.colors.accent, 0.4) },
+                ]}
+              >
+                <AppText variant="label" color={activeTheme.colors.accent}>
+                  {voiceLang === 'es-ES' ? 'ES' : '日本'}
+                </AppText>
+              </Pressable>
+              <Pressable onPress={stopVoiceMode} hitSlop={8}>
+                <MaterialCommunityIcons
+                  name="close-circle"
+                  size={20}
+                  color={activeTheme.colors.textMuted}
+                />
+              </Pressable>
+            </View>
+          ) : null}
+
           {pendingImage ? (
             <View style={styles.pendingAttachmentRow}>
               <Image
@@ -522,7 +756,7 @@ export function KyaryScreen() {
               value={input}
               onChangeText={setInput}
               onSubmitEditing={() => void submit()}
-              editable={!isSending}
+              editable={!isSending && !voiceActive}
               multiline
               numberOfLines={3}
               maxLength={800}
@@ -541,7 +775,7 @@ export function KyaryScreen() {
             <View style={styles.attachButtons}>
               <Pressable
                 onPress={pickImage}
-                disabled={isSending || isRecording}
+                disabled={isSending || isRecording || voiceActive}
                 style={({ pressed }) => [
                   styles.attachButton,
                   {
@@ -552,7 +786,12 @@ export function KyaryScreen() {
                     borderColor: isDark
                       ? hexToRgba(activeTheme.colors.white, 0.12)
                       : hexToRgba(activeTheme.colors.black, 0.12),
-                    opacity: isSending || isRecording ? 0.4 : pressed ? 0.7 : 1,
+                    opacity:
+                      isSending || isRecording || voiceActive
+                        ? 0.4
+                        : pressed
+                          ? 0.7
+                          : 1,
                   },
                 ]}
               >
@@ -566,7 +805,7 @@ export function KyaryScreen() {
               {Platform.OS !== 'web' ? (
                 <Pressable
                   onPress={toggleRecording}
-                  disabled={isSending}
+                  disabled={isSending || voiceActive}
                   style={({ pressed }) => [
                     styles.attachButton,
                     {
@@ -592,13 +831,41 @@ export function KyaryScreen() {
                   />
                 </Pressable>
               ) : null}
+
+              <Pressable
+                onPress={toggleVoiceMode}
+                disabled={isSending && !voiceActive}
+                style={({ pressed }) => [
+                  styles.attachButton,
+                  {
+                    backgroundColor: voiceActive
+                      ? hexToRgba(activeTheme.colors.accent, 0.18)
+                      : hexToRgba(
+                          activeTheme.colors.backgroundSecondary,
+                          Platform.OS === 'android' ? 0.9 : 0.28,
+                        ),
+                    borderColor: voiceActive
+                      ? hexToRgba(activeTheme.colors.accent, 0.5)
+                      : isDark
+                        ? hexToRgba(activeTheme.colors.white, 0.12)
+                        : hexToRgba(activeTheme.colors.black, 0.12),
+                    opacity: isSending && !voiceActive ? 0.4 : pressed ? 0.7 : 1,
+                  },
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name="account-voice"
+                  size={18}
+                  color={activeTheme.colors.accent}
+                />
+              </Pressable>
             </View>
 
             <PrimaryButton
               title={isSending ? 'PENSANDO...' : 'ENVIAR'}
               variant="primary"
               size="compact"
-              disabled={!canSend}
+              disabled={!canSend || voiceActive}
               onPress={() => void submit()}
               style={styles.sendButton}
             />
@@ -801,6 +1068,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: theme.spacing.xs,
     paddingVertical: 4,
+  },
+  voiceBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+    borderWidth: 1,
+    borderRadius: theme.radii.md,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+  },
+  voiceStatus: {
+    flex: 1,
+  },
+  voiceLangChip: {
+    borderWidth: 1,
+    borderRadius: theme.radii.pill,
+    paddingHorizontal: theme.spacing.xs,
+    paddingVertical: 2,
   },
   pendingAttachmentRow: {
     flexDirection: 'row',

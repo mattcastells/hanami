@@ -49,7 +49,9 @@ src/
   features/
     game/               *Engine.ts (lógica PURA) + use*Game.ts (hooks con estado/timers/haptics)
     progress/           ProgressProvider (progress.json) + useTrackProgress + progressStore
-    speech/             speak.ts (TTS ja-JP con expo-speech; ver SpeakButton en components/ui)
+    speech/             speak.ts (TTS con expo-speech; SpeakButton en components/ui). El
+                        modo voz de Kyary (STT continuo + Gemini + TTS) usa expo-speech-recognition
+                        (Web Speech API en web, reconocedor nativo en Android; free, sin costo).
     update/             releaseClient.ts (GitHub Releases) + androidUpdater.ts (instalar APK)
   services/             kyary.ts (cliente Gemini)
   data/                 datasets: kana, kanji, vocabulario, frases, números, strokes
