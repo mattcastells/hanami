@@ -5,8 +5,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../components/ui/AppText';
 import { useAppTheme } from '../theme/AppThemeProvider';
 import { RootStackParamList } from '../types/navigation';
+import { DictationGameScreen } from '../screens/DictationGameScreen';
 import { EmojiGameScreen } from '../screens/EmojiGameScreen';
 import { GameScreen } from '../screens/GameScreen';
+import { PronunciationGameScreen } from '../screens/PronunciationGameScreen';
+import { ReviewScreen } from '../screens/ReviewScreen';
 import { HiraganaSelectionScreen } from '../screens/HiraganaSelectionScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { KanjiGameScreen } from '../screens/KanjiGameScreen';
@@ -48,6 +51,9 @@ function PracticeNavigator() {
       <PracticeStack.Screen name="Vocabulary" component={VocabularyScreen} />
       <PracticeStack.Screen name="EmojiGame" component={EmojiGameScreen} />
       <PracticeStack.Screen name="TimesGame" component={TimesGameScreen} />
+      <PracticeStack.Screen name="DictationGame" component={DictationGameScreen} />
+      <PracticeStack.Screen name="PronunciationGame" component={PronunciationGameScreen} />
+      <PracticeStack.Screen name="Review" component={ReviewScreen} />
     </PracticeStack.Navigator>
   );
 }

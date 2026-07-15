@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
 
+import { StreakCard } from '../components/progress/StreakCard';
 import { AppText } from '../components/ui/AppText';
 import { ScreenBackground } from '../components/ui/ScreenBackground';
 import { KANJI_LIST } from '../data/kanji';
@@ -88,6 +89,12 @@ export function HomeScreen({ navigation }: RootStackScreenProps<'Home'>) {
 
   const rows: HomeRow[] = [
     {
+      glyph: '復',
+      title: 'Repasar',
+      subtitle: 'Repaso espaciado del día',
+      onPress: () => navigation.navigate('Review'),
+    },
+    {
       glyph: 'あ',
       title: 'Hiragana',
       subtitle: 'Silabario básico',
@@ -129,6 +136,18 @@ export function HomeScreen({ navigation }: RootStackScreenProps<'Home'>) {
       subtitle: 'Leer y escribir la hora',
       onPress: () => navigation.navigate('TimesGame'),
     },
+    {
+      glyph: '聴',
+      title: 'Dictado',
+      subtitle: 'Escuchá y escribí lo que oís',
+      onPress: () => navigation.navigate('DictationGame'),
+    },
+    {
+      glyph: '発',
+      title: 'Pronunciación',
+      subtitle: 'Hablá y recibí feedback',
+      onPress: () => navigation.navigate('PronunciationGame'),
+    },
   ];
 
   return (
@@ -147,6 +166,8 @@ export function HomeScreen({ navigation }: RootStackScreenProps<'Home'>) {
           {greeting.es}
         </AppText>
       </View>
+
+      <StreakCard />
 
       <View style={styles.list}>
         {rows.map((row, index) => (

@@ -13,14 +13,17 @@ import { File, Paths } from 'expo-file-system';
 import {
   ProgressData,
   SessionResult,
+  applyDailyActivity,
   applySession,
   createEmptyProgress,
+  localDayString,
   normalizeProgress,
 } from './progressStore';
 
 type ProgressContextValue = {
   data: ProgressData;
   recordSession: (modeKey: string, session: SessionResult) => void;
+  setDailyGoal: (goal: number) => void;
   exportProgress: () => string;
   importProgress: (raw: string) => boolean;
   resetProgress: () => void;
@@ -73,11 +76,27 @@ export function ProgressProvider({ children }: PropsWithChildren) {
   const recordSession = useCallback(
     (modeKey: string, session: SessionResult) => {
       dirtyRef.current = true;
-      const timestamp = new Date().toISOString();
-      setData((current) => applySession(current, modeKey, session, timestamp));
+      const now = new Date();
+      const timestamp = now.toISOString();
+      const today = localDayString(now);
+      setData((current) => {
+        const withSession = applySession(current, modeKey, session, timestamp);
+        return {
+          ...withSession,
+          daily: applyDailyActivity(withSession.daily, session.answered, today),
+        };
+      });
     },
     [],
   );
+
+  const setDailyGoal = useCallback((goal: number) => {
+    dirtyRef.current = true;
+    setData((current) => ({
+      ...current,
+      daily: { ...current.daily, dailyGoal: goal },
+    }));
+  }, []);
 
   const exportProgress = useCallback(() => JSON.stringify(data, null, 2), [data]);
 
@@ -104,11 +123,12 @@ export function ProgressProvider({ children }: PropsWithChildren) {
     () => ({
       data,
       recordSession,
+      setDailyGoal,
       exportProgress,
       importProgress,
       resetProgress,
     }),
-    [data, recordSession, exportProgress, importProgress, resetProgress],
+    [data, recordSession, setDailyGoal, exportProgress, importProgress, resetProgress],
   );
 
   return (

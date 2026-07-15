@@ -11,11 +11,72 @@ export type ProgressModeStats = {
   lastPlayed: string | null;
 };
 
+export type DailyProgress = {
+  lastActiveDate: string | null; // YYYY-MM-DD (local)
+  currentStreak: number;
+  bestStreak: number;
+  todayCount: number; // rondas respondidas hoy
+  dailyGoal: number; // meta de rondas por día
+};
+
 export type ProgressData = {
   version: 1;
   byMode: Record<string, ProgressModeStats>;
+  daily: DailyProgress;
   updatedAt: string | null;
 };
+
+export const DEFAULT_DAILY_GOAL = 20;
+
+export function createEmptyDaily(): DailyProgress {
+  return {
+    lastActiveDate: null,
+    currentStreak: 0,
+    bestStreak: 0,
+    todayCount: 0,
+    dailyGoal: DEFAULT_DAILY_GOAL,
+  };
+}
+
+// Día local en formato YYYY-MM-DD.
+export function localDayString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function dayDifference(fromDay: string, toDay: string): number {
+  const from = new Date(`${fromDay}T00:00:00`);
+  const to = new Date(`${toDay}T00:00:00`);
+  return Math.round((to.getTime() - from.getTime()) / 86_400_000);
+}
+
+// Actualiza la racha/meta con la actividad de hoy. Solo incrementa la racha una vez
+// por día (en la primera actividad de un día nuevo).
+export function applyDailyActivity(
+  daily: DailyProgress,
+  answered: number,
+  today: string,
+): DailyProgress {
+  if (daily.lastActiveDate === today) {
+    return { ...daily, todayCount: daily.todayCount + answered };
+  }
+
+  const gap =
+    daily.lastActiveDate != null
+      ? dayDifference(daily.lastActiveDate, today)
+      : null;
+  const nextStreak = gap === 1 ? daily.currentStreak + 1 : 1;
+
+  return {
+    ...daily,
+    lastActiveDate: today,
+    currentStreak: nextStreak,
+    bestStreak: Math.max(daily.bestStreak, nextStreak),
+    todayCount: answered,
+  };
+}
 
 // Lo que aporta una sesión terminada (acumulado de esa partida).
 export type SessionResult = {
@@ -40,6 +101,8 @@ export const PROGRESS_MODE_LABELS: Record<string, string> = {
   numbers: 'Números',
   times: 'Horarios',
   emoji: 'Imágenes',
+  dictation: 'Dictado',
+  pronunciation: 'Pronunciación',
 };
 
 export function getModeLabel(modeKey: string): string {
@@ -47,7 +110,12 @@ export function getModeLabel(modeKey: string): string {
 }
 
 export function createEmptyProgress(): ProgressData {
-  return { version: PROGRESS_VERSION, byMode: {}, updatedAt: null };
+  return {
+    version: PROGRESS_VERSION,
+    byMode: {},
+    daily: createEmptyDaily(),
+    updatedAt: null,
+  };
 }
 
 function emptyModeStats(): ProgressModeStats {
@@ -73,6 +141,7 @@ export function applySession(
   return {
     version: PROGRESS_VERSION,
     updatedAt: timestamp,
+    daily: current.daily,
     byMode: {
       ...current.byMode,
       [modeKey]: {
@@ -143,7 +212,25 @@ export function normalizeProgress(value: unknown): ProgressData {
   return {
     version: PROGRESS_VERSION,
     byMode,
+    daily: toDaily(candidate.daily),
     updatedAt:
       typeof candidate.updatedAt === 'string' ? candidate.updatedAt : null,
+  };
+}
+
+function toDaily(value: unknown): DailyProgress {
+  const candidate = (value ?? {}) as Record<string, unknown>;
+  const num = (v: unknown, fallback = 0) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
+
+  return {
+    lastActiveDate:
+      typeof candidate.lastActiveDate === 'string'
+        ? candidate.lastActiveDate
+        : null,
+    currentStreak: num(candidate.currentStreak),
+    bestStreak: num(candidate.bestStreak),
+    todayCount: num(candidate.todayCount),
+    dailyGoal: num(candidate.dailyGoal, DEFAULT_DAILY_GOAL) || DEFAULT_DAILY_GOAL,
   };
 }

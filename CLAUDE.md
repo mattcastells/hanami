@@ -48,7 +48,11 @@ src/
     game/               UI del loop de práctica (DrawingCanvas, FeedbackBanner, ...)
   features/
     game/               *Engine.ts (lógica PURA) + use*Game.ts (hooks con estado/timers/haptics)
-    progress/           ProgressProvider (progress.json) + useTrackProgress + progressStore
+    progress/           ProgressProvider (progress.json) + useTrackProgress + progressStore.
+                        Incluye racha diaria + meta (daily) — StreakCard en Home.
+    srs/                SrsProvider (srs.json) + srsStore: repaso espaciado Leitner
+                        autocontenido (deck = kana + vocab). Pantalla: ReviewScreen (flashcards).
+    notifications/      reminders.ts: recordatorio diario local (expo-notifications, solo nativo).
     speech/             speak.ts (TTS con expo-speech; SpeakButton en components/ui). El
                         modo voz de Kyary (STT continuo + Gemini + TTS) usa expo-speech-recognition
                         (Web Speech API en web, reconocedor nativo en Android; free, sin costo).

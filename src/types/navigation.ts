@@ -37,6 +37,9 @@ export type RootStackParamList = {
     script: KanaScript;
   };
   TimesGame: undefined;
+  DictationGame: undefined;
+  PronunciationGame: undefined;
+  Review: undefined;
 };
 
 export type RootStackScreenProps<Screen extends keyof RootStackParamList> =

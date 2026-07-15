@@ -17,6 +17,9 @@ type AppSettings = {
   themeMode: ThemeMode;
   // API key propia de Gemini (BYOK). Si está vacía, Kyary usa la embebida en el bundle.
   geminiApiKey: string;
+  // Recordatorio diario (notificación local).
+  reminderEnabled: boolean;
+  reminderHour: number; // 0-23
 };
 
 type AppSettingsContextValue = {
@@ -24,12 +27,16 @@ type AppSettingsContextValue = {
   setHapticsEnabled: (enabled: boolean) => void;
   setThemeMode: (mode: ThemeMode) => void;
   setGeminiApiKey: (key: string) => void;
+  setReminderEnabled: (enabled: boolean) => void;
+  setReminderHour: (hour: number) => void;
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
   hapticsEnabled: false,
   themeMode: 'light',
   geminiApiKey: '',
+  reminderEnabled: false,
+  reminderHour: 20,
 };
 
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
@@ -105,14 +112,39 @@ export function AppSettingsProvider({ children }: PropsWithChildren) {
     }));
   }, []);
 
+  const setReminderEnabled = useCallback((enabled: boolean) => {
+    userTouchedRef.current = true;
+    setSettings((currentSettings) => ({
+      ...currentSettings,
+      reminderEnabled: enabled,
+    }));
+  }, []);
+
+  const setReminderHour = useCallback((hour: number) => {
+    userTouchedRef.current = true;
+    setSettings((currentSettings) => ({
+      ...currentSettings,
+      reminderHour: hour,
+    }));
+  }, []);
+
   const value = useMemo(
     () => ({
       settings,
       setHapticsEnabled,
       setThemeMode,
       setGeminiApiKey,
+      setReminderEnabled,
+      setReminderHour,
     }),
-    [setGeminiApiKey, setHapticsEnabled, setThemeMode, settings],
+    [
+      setGeminiApiKey,
+      setHapticsEnabled,
+      setReminderEnabled,
+      setReminderHour,
+      setThemeMode,
+      settings,
+    ],
   );
 
   return (
@@ -145,11 +177,20 @@ function normalizeSettings(value: unknown): AppSettings {
 
   const record = candidate as Record<string, unknown>;
 
+  const reminderHour =
+    typeof record.reminderHour === 'number' &&
+    record.reminderHour >= 0 &&
+    record.reminderHour <= 23
+      ? Math.floor(record.reminderHour)
+      : 20;
+
   return {
     hapticsEnabled: candidate.hapticsEnabled === true,
     themeMode: record.themeMode === 'dark' ? 'dark' : 'light',
     geminiApiKey:
       typeof record.geminiApiKey === 'string' ? record.geminiApiKey : '',
+    reminderEnabled: record.reminderEnabled === true,
+    reminderHour,
   };
 }
 

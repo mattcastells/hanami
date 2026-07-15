@@ -19,6 +19,11 @@ import { PrimaryButton } from '../components/ui/PrimaryButton';
 import { ScreenBackground } from '../components/ui/ScreenBackground';
 import { ScreenHeader } from '../components/ui/ScreenHeader';
 import { AppText } from '../components/ui/AppText';
+import {
+  requestReminderPermission,
+  syncDailyReminder,
+} from '../features/notifications/reminders';
+import { useProgress } from '../features/progress/ProgressProvider';
 import { downloadAndInstallRelease } from '../features/update/androidUpdater';
 import {
   compareVersions,
@@ -28,6 +33,9 @@ import {
 import { useAppSettings } from '../settings/AppSettingsProvider';
 import { useAppTheme } from '../theme/AppThemeProvider';
 import { hexToRgba, theme } from '../theme/theme';
+
+const REMINDER_HOURS = [8, 13, 18, 20, 21];
+const GOAL_OPTIONS = [10, 20, 30, 50];
 
 type UpdateState =
   | { kind: 'idle' }
@@ -40,11 +48,41 @@ type UpdateState =
 export function OptionsScreen() {
   const { theme: activeTheme, mode } = useAppTheme();
   const {
-    settings: { hapticsEnabled, geminiApiKey },
+    settings: { hapticsEnabled, geminiApiKey, reminderEnabled, reminderHour },
     setHapticsEnabled,
     setThemeMode,
     setGeminiApiKey,
+    setReminderEnabled,
+    setReminderHour,
   } = useAppSettings();
+  const { data: progressData, setDailyGoal } = useProgress();
+  const dailyGoal = progressData.daily.dailyGoal;
+  const [reminderError, setReminderError] = useState<string | null>(null);
+
+  const handleToggleReminder = async (enabled: boolean) => {
+    if (enabled) {
+      const granted = await requestReminderPermission();
+      if (!granted) {
+        setReminderError(
+          'No se pudo activar. Habilitá las notificaciones en los ajustes del sistema.',
+        );
+        return;
+      }
+      setReminderError(null);
+      setReminderEnabled(true);
+      void syncDailyReminder(true, reminderHour);
+    } else {
+      setReminderEnabled(false);
+      void syncDailyReminder(false, reminderHour);
+    }
+  };
+
+  const handleSelectHour = (hour: number) => {
+    setReminderHour(hour);
+    if (reminderEnabled) {
+      void syncDailyReminder(true, hour);
+    }
+  };
   const [keyDraft, setKeyDraft] = useState(geminiApiKey);
   const [showKey, setShowKey] = useState(false);
   const [keySaved, setKeySaved] = useState(false);
@@ -190,6 +228,136 @@ export function OptionsScreen() {
             }}
             ios_backgroundColor={activeTheme.colors.lineStrong}
           />
+        </View>
+
+        <View
+          style={[
+            styles.settingRow,
+            {
+              borderColor: activeTheme.colors.line,
+              backgroundColor:
+                Platform.OS === 'android'
+                  ? hexToRgba(activeTheme.colors.backgroundSecondary, 0.88)
+                  : hexToRgba(activeTheme.colors.black, 0.14),
+            },
+          ]}
+        >
+          <View style={styles.settingCopy}>
+            <AppText variant="bodyStrong">Recordatorio diario</AppText>
+            <AppText variant="bodySmall" color={activeTheme.colors.textMuted}>
+              {Platform.OS === 'web'
+                ? 'Solo en la app móvil'
+                : `Todos los días a las ${reminderHour}:00`}
+            </AppText>
+          </View>
+
+          <Switch
+            value={reminderEnabled}
+            onValueChange={(enabled) => void handleToggleReminder(enabled)}
+            disabled={Platform.OS === 'web'}
+            thumbColor={'#F7F4EF'}
+            trackColor={{
+              false: activeTheme.colors.lineStrong,
+              true: activeTheme.colors.accent,
+            }}
+            ios_backgroundColor={activeTheme.colors.lineStrong}
+          />
+        </View>
+
+        {reminderEnabled && Platform.OS !== 'web' ? (
+          <View style={styles.chipRow}>
+            {REMINDER_HOURS.map((hour) => {
+              const selected = reminderHour === hour;
+              return (
+                <Pressable
+                  key={hour}
+                  onPress={() => handleSelectHour(hour)}
+                  style={[
+                    styles.chip,
+                    {
+                      borderColor: selected
+                        ? activeTheme.colors.accent
+                        : activeTheme.colors.line,
+                      backgroundColor: selected
+                        ? hexToRgba(activeTheme.colors.accent, 0.1)
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <AppText
+                    variant="label"
+                    color={
+                      selected
+                        ? activeTheme.colors.accent
+                        : activeTheme.colors.textSecondary
+                    }
+                  >
+                    {hour}:00
+                  </AppText>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+
+        {reminderError ? (
+          <AppText variant="bodySmall" color={activeTheme.colors.error}>
+            {reminderError}
+          </AppText>
+        ) : null}
+
+        <View
+          style={[
+            styles.settingRow,
+            {
+              borderColor: activeTheme.colors.line,
+              backgroundColor:
+                Platform.OS === 'android'
+                  ? hexToRgba(activeTheme.colors.backgroundSecondary, 0.88)
+                  : hexToRgba(activeTheme.colors.black, 0.14),
+            },
+          ]}
+        >
+          <View style={styles.settingCopy}>
+            <AppText variant="bodyStrong">Meta diaria</AppText>
+            <AppText variant="bodySmall" color={activeTheme.colors.textMuted}>
+              {dailyGoal} rondas por día
+            </AppText>
+          </View>
+        </View>
+
+        <View style={styles.chipRow}>
+          {GOAL_OPTIONS.map((goal) => {
+            const selected = dailyGoal === goal;
+            return (
+              <Pressable
+                key={goal}
+                onPress={() => setDailyGoal(goal)}
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: selected
+                      ? activeTheme.colors.accent
+                      : activeTheme.colors.line,
+                    backgroundColor: selected
+                      ? hexToRgba(activeTheme.colors.accent, 0.1)
+                      : 'transparent',
+                  },
+                ]}
+              >
+                <AppText
+                  variant="label"
+                  color={
+                    selected
+                      ? activeTheme.colors.accent
+                      : activeTheme.colors.textSecondary
+                  }
+                >
+                  {goal}
+                </AppText>
+              </Pressable>
+            );
+          })}
         </View>
 
         {updateState.kind !== 'idle' ? (
@@ -471,5 +639,17 @@ const styles = StyleSheet.create({
   },
   keyActionFlex: {
     flex: 1,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.xs,
+  },
+  chip: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: theme.radii.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

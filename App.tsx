@@ -13,6 +13,7 @@ import { ZenKakuGothicNew_700Bold } from '@expo-google-fonts/zen-kaku-gothic-new
 
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ProgressProvider } from './src/features/progress/ProgressProvider';
+import { SrsProvider } from './src/features/srs/SrsProvider';
 import { AppSettingsProvider } from './src/settings/AppSettingsProvider';
 import { AppThemeProvider, useAppTheme } from './src/theme/AppThemeProvider';
 
@@ -35,7 +36,9 @@ export default function App() {
         <AppSettingsProvider>
           <AppThemeProvider>
             <ProgressProvider>
-              <AppShell />
+              <SrsProvider>
+                <AppShell />
+              </SrsProvider>
             </ProgressProvider>
           </AppThemeProvider>
         </AppSettingsProvider>
